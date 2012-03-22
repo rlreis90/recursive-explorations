@@ -23,6 +23,8 @@ iout = fold (fmap iin)
 --data Greatest f where
 --    Greatest :: Functor f => (x -> f x, x) -> Greatest f
 
+fold2 f t = fmap (fold f) (iout t)
+
 data Functor f => Greatest f = forall x. Greatest (x -> f x, x)
 unfold = curry Greatest
 
@@ -81,6 +83,12 @@ k''' f z = f . fmap (\x -> (x, z)) . fmap (k''' f z . Nat) . natout
 
 k'''' :: (Maybe (b, a) -> a) -> (b, Nat) -> a
 k'''' f = uncurry $ \z -> f . fmap (z,) . fmap (k'''' f . (z,) . Nat) . natout
+
+-- rmap f (x,y) = (x, f y)
+-- k''''' :: ((b, Maybe a) -> a) -> (b, Nat) -> a
+-- k''''' f = rmap (f . fmap (k''''' f . Nat) . natout)
+
+test f = uncurry (fold . curry f)
 
 h :: (b -> Maybe a -> a) -> b -> Nat -> a
 h f x = natfold (f x)
