@@ -13,7 +13,8 @@
              FlexibleContexts,
              UndecidableInstances,
              TypeSynonymInstances,
-             TypeOperators #-}
+             TypeOperators,
+			 LiberalTypeSynonyms #-}
 
 module Fixpoint where
 import Prelude hiding (succ,repeat,head,tail,iterate,map,Monad,(>>=)) 
@@ -42,7 +43,7 @@ class (Category hom, Category hom') => Functor' hom hom' f where
 instance Functor f => Functor' (->) (->) f where
   map = fmap
 
-class (Category i, Functor' i i w) => Comonad i w where
+class (Category i, Endofunctor i w) => Comonad i w where
   extract :: i (w a) a
   duplicate :: i (w a) (w (w a))
   
@@ -94,8 +95,12 @@ instance Category i => Category (Iso i) where
 instance (Functor' i j f) => Functor' (Iso i) (Iso j) f where
   map (Iso f f') = Iso (map f) (map f')
 
+class Functor' i i f => Endofunctor i f
+
+instance Functor' i i f => Endofunctor i f
 
 
+-- data (Category (>->), Functor' (>->) (>->) f) => Least' (>->) f = Least' (forall x. (f x >-> x) >-> x)
 data (Category i, Functor' i i f) => Least' i f = Least' (forall x. i (i (f x) x) x)
 
 
@@ -110,8 +115,8 @@ fold' f (Least' k) = k f
 
 
 
-class Category k => Fixpoint fix k where
-  fixpoint :: (Functor f) => Iso k (f (fix f)) (fix f)
+class Category i => Fixpoint fix i where
+  fixpoint :: (Functor f) => Iso i (f (fix f)) (fix f)
 
 
 data Functor f => Least f = Least (forall x. (f x -> x) -> x)
