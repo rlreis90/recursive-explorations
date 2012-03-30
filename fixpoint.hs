@@ -16,7 +16,7 @@
              TypeOperators #-}
 
 module Fixpoint where
-import Prelude hiding (succ,repeat,head,tail,iterate,map) 
+import Prelude hiding (succ,repeat,head,tail,iterate,map,Monad,(>>=)) 
 
 --General helpers
 case_maybe f z m = case m of Nothing -> z; Just x -> f x
@@ -45,9 +45,17 @@ instance Functor f => Functor' (->) (->) f where
 class (Category i, Functor' i i w) => Comonad i w where
   extract :: i (w a) a
   duplicate :: i (w a) (w (w a))
+  
+class (Category i, Functor' i i m) => Monad i m where
+  unit ::  i a (m a)
+  join :: i (m (m a)) (m a) 
 
 extend f = map f ° duplicate
+bind f = join ° map f
 
+m =>> f = extend f m
+m >>= f = bind f m
+	
 instance Category (->) where
   idt = id
   f ° g = f . g
@@ -111,14 +119,14 @@ data Functor f => Least f = Least (forall x. (f x -> x) -> x)
 instance Fixpoint Least (->) where
   fixpoint = (\s -> Least $ \alg -> (alg . fmap (fold alg)) s)  <->  fold (fmap $ to fixpoint)
 
+--data Greatest f where
+--    Greatest :: Functor f => (x -> f x, x) -> Greatest f
 data Functor f => Greatest f = forall x. Greatest (x -> f x, x)
 unfold = curry Greatest
 
---data Greatest f where
---    Greatest :: Functor f => (x -> f x, x) -> Greatest f
 
 instance Fixpoint Greatest (->) where
-  fixpoint = unfold (fmap $ from fixpoint)  <->  (\(Greatest (coalg, x)) -> fmap (unfold coalg) (coalg x))
+  fixpoint = unfold (fmap $ from fixpoint)  <->  \(Greatest (coalg, x)) -> fmap (unfold coalg) (coalg x)
 
 --injective := domain = coimage
 --surjective := codomain = image
@@ -177,7 +185,7 @@ instance Num Nat where
 --List
 newtype Sumprod a b = Sumprod {unSumprod::Maybe (a, b)} deriving (Functor, Show)
 
-newtype List a = List {unList::Least (Sumprod a)}
+newtype List a = List {unList::Least(Sumprod a)}
 
 instance Show a => Show (List a) where
   show xs = "[" ++ case_list (\(x, s) -> show x ++ if s == "" then s else ", " ++ s) "" xs ++ "]"
@@ -185,7 +193,7 @@ instance Show a => Show (List a) where
 instance Functor List where
   fmap f = case_list (uncurry $ curry cons . f) nil
 
-list = list ° fixpoint ° sumprod ° map (map_right_iso (inverse list)) -- ° map (inverse sumprod)
+list = list ° fixpoint ° sumprod ° map (map_right_iso (inverse list))
        where list = List <-> unList
              sumprod = Sumprod <-> unSumprod
 
@@ -202,8 +210,9 @@ fold_list f = fold (f . unSumprod) . unList
 append (xs, ys) = case_list cons ys xs
 xs +++ ys = append (xs, ys)
 
-unit x = cons (x, nil)
-join = case_list append nil
+instance Monad (->) List where
+  unit x = cons (x, nil)
+  join = case_list append nil
 
 mapB f (a, b) = (f a, f b)
 
