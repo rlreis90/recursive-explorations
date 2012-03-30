@@ -143,6 +143,18 @@ succ = to nat . Just
 fold_nat f = fold f . unNat
 case_nat f x = fold_nat (case_maybe f x)
 
+-- newtype Fixpoint f (->) => Nat' = Nat' {unNat'::f Maybe}
+-- nat_const = Nat' <-> unNat'
+
+-- nat' = nat_const ° fixpoint ° map (inverse nat_const)
+
+-- zero' = to nat' Nothing
+-- succ' = to nat' . Just
+
+-- fold_nat' f = fold f . from nat_const
+-- case_nat' f x = fold_nat (case_maybe f x)
+
+
 -- times :: (b -> a -> a) -> a -> b -> Nat -> a
 -- times plus zero m = case_maybe (\n -> m `plus` times plus zero m n)) zero . from nat
 -- times plus zero m = case_maybe (plus m) zero . fmap (times plus zero m) . from nat
@@ -184,8 +196,18 @@ instance Num Nat where
 
 --List
 newtype Sumprod a b = Sumprod {unSumprod::Maybe (a, b)} deriving (Functor, Show)
+sumprod = Sumprod <-> unSumprod
 
 newtype List a = List {unList::Least(Sumprod a)}
+
+list = list ° fixpoint ° sumprod ° map (map_right_iso (inverse list))
+       where list = List <-> unList
+
+nil  = to list Nothing
+cons = to list . Just
+
+case_list f x = fold (case_maybe f x . unSumprod) . unList
+fold_list f = fold (f . unSumprod) . unList
 
 instance Show a => Show (List a) where
   show xs = "[" ++ case_list (\(x, s) -> show x ++ if s == "" then s else ", " ++ s) "" xs ++ "]"
@@ -193,19 +215,8 @@ instance Show a => Show (List a) where
 instance Functor List where
   fmap f = case_list (uncurry $ curry cons . f) nil
 
-list = list ° fixpoint ° sumprod ° map (map_right_iso (inverse list))
-       where list = List <-> unList
-             sumprod = Sumprod <-> unSumprod
-
-nil  = to list Nothing
-cons = to list . Just
-
-case_list f x = fold (case_maybe f x . unSumprod) . unList
-
 -- instance Initial (->) (Sumprod a) Least where
   -- fold f = fold (f . unSumprod) . unList
-
-fold_list f = fold (f . unSumprod) . unList
 
 append (xs, ys) = case_list cons ys xs
 xs +++ ys = append (xs, ys)
@@ -214,53 +225,29 @@ instance Monad (->) List where
   unit x = cons (x, nil)
   join = case_list append nil
 
-mapB f (a, b) = (f a, f b)
+newtype List' f a = List' {unList'::f(Sumprod a)}
+list_const = List' <-> unList'
 
-merge_sort k [] = []
-merge_sort k [x] = [x]
-merge_sort k xs = uncurry (merge k) $ mapB (merge_sort k) $ split xs
-    where
-      split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
-      merge pred xs []         = xs
-      merge pred [] ys         = ys
-      merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
-                               | otherwise = y: merge pred (x:xs) ys
-								
-mergesort :: (a -> a -> Bool) -> [a] -> [a]
-mergesort pred []   = []
-mergesort pred [x]  = [x]
-mergesort pred xs = merge pred (mergesort pred xs1) (mergesort pred xs2)
-  where
-    (xs1,xs2) = split xs
-    split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
-	
-merge pred xs []         = xs
-merge pred [] ys         = ys
-merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
-                         | otherwise = y: merge pred (x:xs) ys
+-- colist = colist ° fixpoint ° sumprod ° map (map_right_iso (inverse colist))
+         -- where colist = CoList <-> unCoList
 
+list' = list_const ° fixpoint ° sumprod ° map (map_right_iso (inverse list_const))
 
-fromList (x:xs) = cons(x, fromList xs) 
-fromList [] = nil
+nil' = to list' Nothing
+cons' = to list' ° Just
 
--- merge' l r = case from list l of
-               -- Just (x,xs) ->
-                   -- case from list r of
-                      -- Just (y,ys) -> if x < y then common x y xs ys else common y x ys xs
-                      -- Nothing     -> l
-               -- Nothing     -> r
-               -- where common l r ls rs = cons (l, merge' ls (cons (r, rs)))
+unfold_list f = to list_const ° unfold (to sumprod ° f)
+fold_list' f = fold' (f ° from sumprod) ° from list_const
 
--- merge'' xs ys = case_list (\(y, xs') -> ) xs ys
+-- instance Functor (CoList f) where
+  -- fmap f = unfold_colist $ (fmap (map_left f)) . from colist
 
-type (:+:) = Either
+-- instance Applicative CoList where
+  -- ap = curry $ unfold_colist (\(xs, ys) -> (head xs (head ys), (tail xs, tail ys)))
 
-bool b = if b then Left () else Right ()
-
-bimap f x = case x of Left a -> f a; Right b -> f b
-
-partition :: Functor' (->) h f => (a -> Bool) -> h (f a) (f (a :+: a))
-partition p = map (\v -> if p v then Left v else Right v)
+-- instance Monad (->) CoList where
+  -- unit x = cocons (x, conil)
+  -- join = tails
 
 --Stream
 newtype Pair a b = Pair {unPair::(a, b)} deriving (Functor, Show)
@@ -325,3 +312,52 @@ ack'' m = case_maybe (\m' -> ack'' m' . case_maybe (ack'' m) (succ zero) . from 
 ack''' m = case_maybe (uncurry ack'''.) succ . fmap (curry $ map_right $ case_maybe (ack''' m) (succ zero) . from nat) . from nat $ m
 
 -- ack5 m n = case_nat (\m' -> ack5 m' . case_maybe (ack5 m) (succ zero) . from nat) (succ n) m
+
+
+mapB f (a, b) = (f a, f b)
+
+merge_sort k [] = []
+merge_sort k [x] = [x]
+merge_sort k xs = uncurry (merge k) $ mapB (merge_sort k) $ split xs
+    where
+      split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
+      merge pred xs []         = xs
+      merge pred [] ys         = ys
+      merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
+                               | otherwise = y: merge pred (x:xs) ys
+								
+mergesort :: (a -> a -> Bool) -> [a] -> [a]
+mergesort pred []   = []
+mergesort pred [x]  = [x]
+mergesort pred xs = merge pred (mergesort pred xs1) (mergesort pred xs2)
+  where
+    (xs1,xs2) = split xs
+    split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
+	
+merge pred xs []         = xs
+merge pred [] ys         = ys
+merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
+                         | otherwise = y: merge pred (x:xs) ys
+
+
+fromList (x:xs) = cons(x, fromList xs) 
+fromList [] = nil
+
+-- merge' l r = case from list l of
+               -- Just (x,xs) ->
+                   -- case from list r of
+                      -- Just (y,ys) -> if x < y then common x y xs ys else common y x ys xs
+                      -- Nothing     -> l
+               -- Nothing     -> r
+               -- where common l r ls rs = cons (l, merge' ls (cons (r, rs)))
+
+-- merge'' xs ys = case_list (\(y, xs') -> ) xs ys
+
+type (:+:) = Either
+
+bool b = if b then Left () else Right ()
+
+bimap f x = case x of Left a -> f a; Right b -> f b
+
+partition :: Functor' (->) h f => (a -> Bool) -> h (f a) (f (a :+: a))
+partition p = map (\v -> if p v then Left v else Right v)
