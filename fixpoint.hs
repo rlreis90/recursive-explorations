@@ -76,7 +76,7 @@ class (Functor' i i f) => Initial i f t where
   fold :: i (f x) x -> i (t f) x
 
 class (Functor' i i f) => Terminal i f t where
-  unfold_ :: i x (f x) -> i x t
+  unfold_ :: i x (f x) -> i x (t f)
 
 instance Functor f => Initial (->) f Least where
   fold f (Least k) = k f
@@ -113,25 +113,26 @@ instance Fixpoint' (Least' (->)) (->) where
 
 fold' f (Least' k) = k f
 
+unfold = curry Greatest
 
 
 class Category i => Fixpoint fix i where
   fixpoint :: (Functor f) => Iso i (f (fix f)) (fix f)
 
-
 data Functor f => Least f = Least (forall x. (f x -> x) -> x)
-
-instance Fixpoint Least (->) where
-  fixpoint = (\s -> Least $ \alg -> (alg . fmap (fold alg)) s)  <->  fold (fmap $ to fixpoint)
 
 --data Greatest f where
 --    Greatest :: Functor f => (x -> f x, x) -> Greatest f
 data Functor f => Greatest f = forall x. Greatest (x -> f x, x)
-unfold = curry Greatest
 
+instance Fixpoint Least (->) where
+  fixpoint = (\s -> Least $ (\alg -> (alg . fmap (fold alg)) s))  <->  fold (fmap $ to fixpoint)
 
 instance Fixpoint Greatest (->) where
   fixpoint = unfold (fmap $ from fixpoint)  <->  \(Greatest (coalg, x)) -> fmap (unfold coalg) (coalg x)
+
+
+
 
 --injective := domain = coimage
 --surjective := codomain = image
