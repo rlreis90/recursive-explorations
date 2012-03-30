@@ -1,18 +1,19 @@
 ﻿{-# LANGUAGE ImpredicativeTypes,
-			 RankNTypes,
-			 ExistentialQuantification,
-			 UnicodeSyntax,
-			 NoMonomorphismRestriction,
-			 TypeFamilies,
-			 DeriveFunctor,
-			 GADTs,
-			 TupleSections,
-			 ScopedTypeVariables,
+             RankNTypes,
+             ExistentialQuantification,
+             UnicodeSyntax,
+             NoMonomorphismRestriction,
+             TypeFamilies,
+             DeriveFunctor,
+             GADTs,
+             TupleSections,
+             ScopedTypeVariables,
              MultiParamTypeClasses,
              FlexibleInstances,
              FlexibleContexts,
-			 UndecidableInstances,
-             TypeSynonymInstances #-}
+             UndecidableInstances,
+             TypeSynonymInstances,
+             TypeOperators #-}
 
 module Fixpoint where
 import Prelude hiding (succ,repeat,head,tail,iterate,map) 
@@ -74,7 +75,7 @@ instance Functor f => Initial (->) f Least where
 --Isomorphism stuff
 data Category h => Iso h a b = Iso { to :: h a b, from :: h b a }
 (<->) = Iso
-inverse (Iso f f') = Iso f' f
+inverse (Iso to from) = Iso from to
 
 map_right_iso (Iso f g) = Iso (map_right f) (map_right g)
 
@@ -178,8 +179,8 @@ newtype Sumprod a b = Sumprod {unSumprod::Maybe (a, b)} deriving (Functor, Show)
 
 newtype List a = List {unList::Least (Sumprod a)}
 
--- instance Show a => Show (List a) where
-  -- show xs = "[" ++ case_list (\(x, s) -> show x ++ ", " ++ s) "[]" xs ++ "]"
+instance Show a => Show (List a) where
+  show xs = "[" ++ case_list (\(x, s) -> show x ++ if s == "" then s else ", " ++ s) "" xs ++ "]"
 
 instance Functor List where
   fmap f = case_list (uncurry $ curry cons . f) nil
@@ -203,6 +204,54 @@ xs +++ ys = append (xs, ys)
 
 unit x = cons (x, nil)
 join = case_list append nil
+
+mapB f (a, b) = (f a, f b)
+
+merge_sort k [] = []
+merge_sort k [x] = [x]
+merge_sort k xs = uncurry (merge k) $ mapB (merge_sort k) $ split xs
+    where
+      split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
+      merge pred xs []         = xs
+      merge pred [] ys         = ys
+      merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
+                               | otherwise = y: merge pred (x:xs) ys
+								
+mergesort :: (a -> a -> Bool) -> [a] -> [a]
+mergesort pred []   = []
+mergesort pred [x]  = [x]
+mergesort pred xs = merge pred (mergesort pred xs1) (mergesort pred xs2)
+  where
+    (xs1,xs2) = split xs
+    split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
+	
+merge pred xs []         = xs
+merge pred [] ys         = ys
+merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
+                         | otherwise = y: merge pred (x:xs) ys
+
+
+fromList (x:xs) = cons(x, fromList xs) 
+fromList [] = nil
+
+-- merge' l r = case from list l of
+               -- Just (x,xs) ->
+                   -- case from list r of
+                      -- Just (y,ys) -> if x < y then common x y xs ys else common y x ys xs
+                      -- Nothing     -> l
+               -- Nothing     -> r
+               -- where common l r ls rs = cons (l, merge' ls (cons (r, rs)))
+
+-- merge'' xs ys = case_list (\(y, xs') -> ) xs ys
+
+type (:+:) = Either
+
+bool b = if b then Left () else Right ()
+
+bimap f x = case x of Left a -> f a; Right b -> f b
+
+partition :: Functor' (->) h f => (a -> Bool) -> h (f a) (f (a :+: a))
+partition p = map (\v -> if p v then Left v else Right v)
 
 --Stream
 newtype Pair a b = Pair {unPair::(a, b)} deriving (Functor, Show)
@@ -238,9 +287,9 @@ instance Comonad (->) Stream where
 -- sequenceS :: Monad m => Stream (m a) -> m (Stream a)
 -- sequenceS (Stream (Greatest (f, x))) = let (Pair (a, b)) = f x in do y <- a; ys <- sequenceS b; return $ Stream (legacyTo legacyFixpoint (Pair (y, un_stream ys)))
 
-partition :: (a -> Bool) -> List a -> (List a, List a)
-partition p = case_list (\(v, (xs, ys)) -> if p v then (cons (v, xs), ys) else (xs, cons (v, ys))) (nil, nil)
-quicksort p = case_list (\(x, xs) -> let (xs, ys) = partition (p x) xs in quicksort p xs +++ unit x +++ quicksort p ys) nil
+-- partition :: (a -> Bool) -> List a -> (List a, List a)
+-- partition p = case_list (\(v, (xs, ys)) -> if p v then (cons (v, xs), ys) else (xs, cons (v, ys))) (nil, nil)
+-- quicksort p = case_list (\(x, xs) -> let (xs, ys) = partition (p x) xs in quicksort p xs +++ unit x +++ quicksort p ys) nil
 -- quicksort p = case_list (\(x, xs) -> let (List xs, List ys) = partition (p x) xs
 --									   in fold (quicksort p) xs +++ unit x +++ fold (quicksort p) ys) nil
 
