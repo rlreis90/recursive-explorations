@@ -161,21 +161,24 @@ case_nat f x = fold_nat (case_maybe f x)
 -- case_nat' f x = fold_nat (case_maybe f x)
 
 
--- times :: (b -> a -> a) -> a -> b -> Nat -> a
--- times plus zero m = case_maybe (\n -> m `plus` times plus zero m n)) zero . from nat
--- times plus zero m = case_maybe (plus m) zero . fmap (times plus zero m) . from nat
--- times plus zero m = case_nat (plus m) zero
--- times plus m = case_nat (plus m . Just) (plus m Nothing)
--- times plus m = fold_nat $ plus m
--- times plus = fold_nat . plus
+-- over :: (b -> a -> a) -> a -> b -> Nat -> a
+-- over plus zero m = case_maybe (\n -> m `plus` over plus zero m n)) zero . from nat
+-- over plus zero m = case_maybe (plus m) zero . fmap (over plus zero m) . from nat
+-- over plus zero m = case_nat (plus m) zero
+-- over plus m = case_nat (plus m . Just) (plus m Nothing)
+-- over plus m = fold_nat $ plus m
+-- over plus = fold_nat . plus
 
--- times :: Functor f => f (Maybe a -> a) -> f (Nat -> a)
-times = fmap fold_nat
+-- over :: Functor f => f (Maybe a -> a) -> f (Nat -> a)
+over = fmap fold_nat
 
 -- plus = case_nat succ
-plus = times $ case_maybe succ
-mult = times $ \m -> case_maybe (plus m) zero
--- mult = times $ flip case_maybe zero . plus
+plus = over $ case_maybe succ
+-- minus = over $ case_maybe pred where pred = case_maybe Just Nothing . from nat
+mult = over $ \m -> case_maybe (plus m) zero
+-- mult = over $ flip case_maybe zero . plus
+
+
 
 inc :: Int -> Int
 inc n = n + 1
@@ -183,11 +186,17 @@ inc n = n + 1
 nat_to_int = case_nat inc 0
 natural x = if x == 0 then zero else succ $ natural (x - 1)
 
+case_pred f z = case_maybe f z . from nat
+
 instance Show Nat where
   show = show . nat_to_int
 
 instance Eq Nat where
-  m == n = nat_to_int m == nat_to_int n
+  -- m == n = nat_to_int m == nat_to_int n
+  (==) = case_nat (\p -> case_pred p False) (case_pred (const False) True)
+
+instance Ord Nat where
+  (>) = case_nat (\p -> case_pred p True) $ const False
 
 instance Num Nat where
   fromInteger = natural
@@ -198,7 +207,7 @@ instance Num Nat where
   abs = id
   signum = id
   negate x = undefined
-  (-) = times $ case_maybe pred where pred = case_maybe id undefined . from nat
+  (-) = over $ case_maybe pred where pred = case_maybe id undefined . from nat
 
 --List
 newtype Sumprod a b = Sumprod {unSumprod::Maybe (a, b)} deriving (Functor, Show)
