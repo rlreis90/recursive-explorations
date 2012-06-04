@@ -14,7 +14,8 @@
              UndecidableInstances,
              TypeSynonymInstances,
              TypeOperators,
-			 LiberalTypeSynonyms #-}
+			 LiberalTypeSynonyms,
+             ScopedTypeVariables #-}
 
 module Fixpoint where
 import Prelude hiding (succ,repeat,head,tail,iterate,map,Monad,(>>=)) 
@@ -27,7 +28,6 @@ map_right f (a, b) = (a, f b)
 map_left f (a, b) = (f a, b)
 fork x = (x, x)
 --Hel
-
 
 --Category theory basics
 class Applicative f where
@@ -275,6 +275,7 @@ stream = stream ° fixpoint ° map (inverse stream) ° pair
 head = fst . from stream
 tail = snd . from stream
 
+unfold_stream :: (b -> (a, b)) -> b -> Stream a
 unfold_stream f = Stream . unfold (Pair . f)
 
 iterate f = unfold_stream (map_right f . fork)
