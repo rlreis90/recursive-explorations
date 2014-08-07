@@ -14,28 +14,101 @@
              UndecidableInstances,
              TypeSynonymInstances,
              TypeOperators,
-			 LiberalTypeSynonyms,
-             ScopedTypeVariables #-}
+             LiberalTypeSynonyms,
+             ScopedTypeVariables,
+             PolyKinds,
+             FunctionalDependencies,
+             LambdaCase             #-}
 
 module Fixpoint where
-import Prelude hiding (succ,repeat,head,tail,iterate,map,Monad,(>>=)) 
+import Prelude hiding (succ,repeat,head,tail,iterate,map,Monad,(>>=),(.),id, fst, snd) 
 
---General helpers
 case_maybe f z m = case m of Nothing -> z; Just x -> f x
 push x k = k x
 
 map_right f (a, b) = (a, f b)
 map_left f (a, b) = (f a, b)
-fork x = (x, x)
---Hel
+
+data Top = forall c. TT c
+data Bottom = FF (forall c. c)
+
+truth c = TT c
+falsehood (FF c) = c
+
+-- type a :<->: b = ((a -> b) :&: (b -> a))
+-- un :: (a :<->: b) -> (b :<->: a)
+-- un x = snd x `sup` fst x
+-- app :: (a :<->: b) -> (a -> b)
+-- app = fst
+
+-- p .:. q = q . p
+
+type Not a = a -> Bottom
+newtype a :&&: b = Sup' (Not (Not a :+: Not b))
+
+dni :: a -> Not (Not a)
+dni a = \k -> k a
+-- dne :: Not (Not a) -> a
+-- dne C[k] = k C
+
+fst'' :: (a :&&: b) -> Not (Not a)
+fst'' (Sup' k)  = \f -> k (Left f)
+snd'' :: (a :&&: b) -> Not (Not b)
+snd'' (Sup' k)  = \f -> k (Right f)
+
+data a :&: b = Sup (forall c. ((a -> c) :+: (b -> c)) -> c)
+
+class Monoid i or o z m | o -> z, z -> o where
+  mult :: i (z `or` (m `o` m)) m
+
+  
+a `sup` b = Sup (\case Left k -> k a ; Right k -> k b)
+
+class Prod i and where
+  fst :: i (a `and` b) a
+  snd :: i (a `and` b) b
+  fuse :: (i a b `and` i a c) -> i a (b `and` c)
+
+instance Prod (->) (:&:) where
+  fst (Sup k) = k (Left id)
+  snd (Sup k) = k (Right id)
+  fuse        = \f x -> fst f x `sup` snd f x
+
+class CoMonoid i and o z w
+  | o -> z, z -> o
+  , and -> i, i -> and
+  where
+  comult :: i w (z `and` (w `o` w))
+  
+-- create = mult . Left
+-- merge = mult . Right
+-- erase :: (Category i, CoMonoid i and op z w, Prod i and) => i w z
+erase = fst . comult
+copy  = snd . comult
+
+instance CoMonoid (->) (:&:) (,) () w where
+  comult x = () `sup` (x, x)
+
+instance CoMonoid (->) (:&:) (:&:) Top w where
+  comult x = truth x `sup` (x `sup` x)
+
+
+newtype Trans i f g = Trans (forall a. i (f a) (g a))
+newtype Compose f g a = Compose (f (g a))
+newtype Identity x  = Identity x
+newtype Product f g a = Product (f a :&: g a)
+
+class (Functor w, CoMonoid (Trans (->)) Product Compose Identity w) => CoMonad w
+instance (Functor w, CoMonoid (Trans (->)) Product Compose Identity w) => CoMonad w
+
 
 --Category theory basics
 class Applicative f where
   ap :: f (a -> b) -> f a -> f b
 
 class Category hom where
-  idt :: hom a a
-  (°) :: hom b c -> hom a b -> hom a c
+  id :: hom a a
+  (.) :: hom b c -> hom a b -> hom a c
 
 class (Category hom, Category hom') => Functor' hom hom' f where
   map :: hom a b -> hom' (f a) (f b)
@@ -51,26 +124,23 @@ class (Category i, Functor' i i m) => Monad i m where
   unit ::  i a (m a)
   join :: i (m (m a)) (m a) 
 
-extend f = map f ° duplicate
-bind f = join ° map f
+extend f = map f . duplicate
+bind f = join . map f
 
-m =>> f = extend f m
-m >>= f = bind f m
+-- m =>> f = extend f m
+-- m >>= f = bind f m
 	
 instance Category (->) where
-  idt = id
-  f ° g = f . g
-
-instance Functor ((->) a) where
-  fmap f g = f . g
+  id = id
+  f . g = f . g
 
 data Hask a b = Hask {unHask::a -> b}
 
 data Op h a b = Op {unOp :: h b a}
 
 instance Category h => Category (Op h) where
-  idt = Op idt
-  f ° g = Op (unOp g ° unOp f)
+  id = Op id
+  f . g = Op (unOp g . unOp f)
 
 class (Functor' i i f) => Initial i f t where
   fold :: i (f x) x -> i (t f) x
@@ -82,18 +152,24 @@ instance Functor f => Initial (->) f Least where
   fold f (Least k) = k f
 
 --Isomorphism stuff
-data Category h => Iso h a b = Iso { to :: h a b, from :: h b a }
-(<->) = Iso
-inverse (Iso to from) = Iso from to
+data Iso h a b = Iso (h a b :&: h b a)
 
-map_right_iso (Iso f g) = Iso (map_right f) (map_right g)
+sym (Iso x) = Iso (swap x)
+
+f <-> g = Iso (f `sup` g)
+
+from (Iso x) = snd x
+to (Iso x) = fst x
+swap x = snd x `sup` fst x
+
+map_right_iso (Iso x) = Iso (map_right (fst x) `sup` map_right (snd x))
 
 instance Category i => Category (Iso i) where
-  idt = Iso idt idt
-  Iso f f' ° Iso g g' = Iso (f ° g) (g' ° f')
+  id = Iso (id `sup` id)
+  Iso f . Iso g = Iso ((fst f . fst g) `sup` (snd g . snd f))
 
 instance (Functor' i j f) => Functor' (Iso i) (Iso j) f where
-  map (Iso f f') = Iso (map f) (map f')
+  map (Iso f) = Iso (map (fst f) `sup` map (snd f))
 
 class Functor' i i f => Endofunctor i f
 
@@ -101,47 +177,42 @@ instance Functor' i i f => Endofunctor i f
 
 
 -- data (Category (>->), Functor' (>->) (>->) f) => Least' (>->) f = Least' (forall x. (f x >-> x) >-> x)
-data (Category i, Functor' i i f) => Least' i f = Least' (forall x. i (i (f x) x) x)
-
-
+data Least' i f = Least' (forall x. i (i (f x) x) x)
 
 class Category k => Fixpoint' fix k where
-  fixpoint' :: (Functor f) => Iso k (f (fix f)) (fix f)
+  roll' :: (Functor f) => Iso k (f (fix f)) (fix f)
 
 instance Fixpoint' (Least' (->)) (->) where
-  fixpoint' = (\s -> Least' $ \alg -> (alg . fmap (fold' alg)) s)  <->  fold' (fmap $ to fixpoint')
+  roll' = (\s -> Least' $ \alg -> (alg . fmap (fold' alg)) s) <-> fold' (fmap $ to roll')
 
+fold' :: (f x -> x) -> Least' (->) f -> x
 fold' f (Least' k) = k f
 
 unfold = curry Greatest
 
 
-class Category i => Fixpoint fix i where
-  fixpoint :: (Functor f) => Iso i (f (fix f)) (fix f)
+class Category i => Fixpoint i fix where
+  roll :: (Functor f) => Iso i (f (fix f)) (fix f)
 
-data Functor f => Least f = Least (forall x. (f x -> x) -> x)
+data Least f = Least (forall x. (f x -> x) -> x)
 
 --data Greatest f where
 --    Greatest :: Functor f => (x -> f x, x) -> Greatest f
-data Functor f => Greatest f = forall x. Greatest (x -> f x, x)
+data Greatest f = forall x. Greatest (x -> f x, x)
 
-instance Fixpoint Least (->) where
-  fixpoint = (\s -> Least $ (\alg -> (alg . fmap (fold alg)) s))  <->  fold (fmap $ to fixpoint)
+instance Fixpoint (->) Least where
+  roll = (\s -> Least $ (\alg -> (alg . fmap (fold alg)) s)) <->  fold (fmap $ to roll)
 
-instance Fixpoint Greatest (->) where
-  fixpoint = unfold (fmap $ from fixpoint)  <->  \(Greatest (coalg, x)) -> fmap (unfold coalg) (coalg x)
+instance Fixpoint (->) Greatest where
+  roll = unfold (fmap $ from roll)  <->  \(Greatest (coalg, x)) -> fmap (unfold coalg) (coalg x)
 
-
-
-
---injective := domain = coimage
---surjective := codomain = image
 
 --Natural numbers
-newtype Nat = Nat {unNat::Least Maybe}
+newtype Nat = Nat { unNat :: Least Maybe }
 
-nat = nat ° fixpoint ° map (inverse nat)
-      where nat = Nat <-> unNat
+nat = trans (Nat <-> unNat)
+
+trans nat = nat . roll . map (sym nat)
 
 zero = to nat Nothing
 succ = to nat . Just
@@ -149,10 +220,13 @@ succ = to nat . Just
 fold_nat f = fold f . unNat
 case_nat f x = fold_nat (case_maybe f x)
 
+p :: Iso (->) (Nat -> a) (Stream a)
+p = Iso ((\f -> fmap f (iterate succ zero)) `sup` (flip (case_nat (\f -> f . tail) head)))
+
 -- newtype Fixpoint f (->) => Nat' = Nat' {unNat'::f Maybe}
 -- nat_const = Nat' <-> unNat'
 
--- nat' = nat_const ° fixpoint ° map (inverse nat_const)
+-- nat' = nat_const . roll . map (sym nat_const)
 
 -- zero' = to nat' Nothing
 -- succ' = to nat' . Just
@@ -175,7 +249,7 @@ over = fmap fold_nat
 -- plus = case_nat succ
 plus = over $ case_maybe succ
 -- minus = over $ case_maybe pred where pred = case_maybe Just Nothing . from nat
-mult = over $ \m -> case_maybe (plus m) zero
+multiply = over $ \m -> case_maybe (plus m) zero
 -- mult = over $ flip case_maybe zero . plus
 
 
@@ -201,7 +275,7 @@ instance Ord Nat where
 instance Num Nat where
   fromInteger = natural
 
-  (*) = mult
+  (*) = multiply
   (+) = plus
 
   abs = id
@@ -210,12 +284,12 @@ instance Num Nat where
   (-) = over $ case_maybe pred where pred = case_maybe id undefined . from nat
 
 --List
-newtype Sumprod a b = Sumprod {unSumprod::Maybe (a, b)} deriving (Functor, Show)
+newtype Sumprod a b = Sumprod { unSumprod :: Maybe (a, b) } deriving (Functor, Show)
 sumprod = Sumprod <-> unSumprod
 
-newtype List a = List {unList::Least(Sumprod a)}
+newtype List a = List { unList :: Least (Sumprod a) }
 
-list = list ° fixpoint ° sumprod ° map (map_right_iso (inverse list))
+list = list . roll . sumprod . map (map_right_iso (sym list))
        where list = List <-> unList
 
 nil  = to list Nothing
@@ -238,21 +312,21 @@ xs +++ ys = append (xs, ys)
 
 instance Monad (->) List where
   unit x = cons (x, nil)
-  join = case_list append nil
+  join   = case_list append nil
 
-newtype List' f a = List' {unList'::f(Sumprod a)}
+newtype List' f a = List' { unList':: f (Sumprod a) }
 list_const = List' <-> unList'
 
--- colist = colist ° fixpoint ° sumprod ° map (map_right_iso (inverse colist))
+-- colist = colist . roll . sumprod . map (map_right_iso (sym colist))
          -- where colist = CoList <-> unCoList
 
-list' = list_const ° fixpoint ° sumprod ° map (map_right_iso (inverse list_const))
+list' = list_const . roll . sumprod . map (map_right_iso (sym list_const))
 
-nil' = to list' Nothing
-cons' = to list' ° Just
+nil'  = to list' Nothing
+cons' = to list' . Just
 
-unfold_list f = to list_const ° unfold (to sumprod ° f)
-fold_list' f = fold' (f ° from sumprod) ° from list_const
+unfold_list f = to list_const . unfold (to sumprod . f)
+fold_list' f = fold' (f . from sumprod) . from list_const
 
 -- instance Functor (CoList f) where
   -- fmap f = unfold_colist $ (fmap (map_left f)) . from colist
@@ -265,32 +339,46 @@ fold_list' f = fold' (f ° from sumprod) ° from list_const
   -- join = tails
 
 --Stream
-newtype Pair a b = Pair {unPair::(a, b)} deriving (Functor, Show)
-newtype Stream a = Stream {unStream :: Greatest (Pair a)}
+newtype Pair a b = Pair { unPair :: (a :&: b) }
+newtype Stream a = Stream { unStream :: Greatest (Pair a) }
 
-stream = stream ° fixpoint ° map (inverse stream) ° pair
+
+instance Functor ((:&:) b) where
+  fmap f x = fst x `sup` f (snd x)
+
+instance Functor (Pair a) where
+  fmap f (Pair x) = Pair (fmap f x)
+
+stream = trans (Stream <-> unStream) . pair
          where pair   = Pair <-> unPair
-               stream = Stream <-> unStream
 
 head = fst . from stream
 tail = snd . from stream
 
-unfold_stream :: (b -> (a, b)) -> b -> Stream a
+type CoAlgebra i f x = i x (f x)
+
+unfold_stream :: (b -> (a :&: b)) -> b -> Stream a
 unfold_stream f = Stream . unfold (Pair . f)
 
-iterate f = unfold_stream (map_right f . fork)
+-- iterate :: CoMonoid (->) (,) () t => (t -> t) -> CoAlgebra Stream t
+iterate f = unfold_stream (fmap f . copy)
 repeat = iterate id
 tails  = iterate tail
 
+-- iso <: x = to iso x
+
+-- recursor :: (Functor f) => (f (a :&: Least f) -> a) -> Least f -> (a :&: Least f)
+recursor g = fold (fuse (g `sup` (to roll . fmap snd)))
+
 instance Functor Stream  where
-  fmap f = unfold_stream $ (map_left f) . from stream
+  fmap f = unfold_stream $ (swap . fmap f . swap) . from stream
 
-instance Applicative Stream where
-  ap = curry $ unfold_stream (\(xs, ys) -> (head xs (head ys), (tail xs, tail ys)))
+-- instance Applicative Stream where
+  -- ap = unfold_stream (\xs -> (head (fst xs) (head (snd xs)) `sup` (tail (fst xs), tail (snd xs))))
 
-instance Comonad (->) Stream where
-  extract   = head
-  duplicate = tails
+-- instance Comonad (->) Stream where
+  -- extract   = head
+  -- duplicate = tails
   
 --sequenceS (Stream (x, xs)) = do y  <- x
 --                                ys <- sequenceS xs
@@ -330,32 +418,6 @@ ack''' m = case_maybe (uncurry ack'''.) succ . fmap (curry $ map_right $ case_ma
 -- ack5 m n = case_nat (\m' -> ack5 m' . case_maybe (ack5 m) (succ zero) . from nat) (succ n) m
 
 
-mapB f (a, b) = (f a, f b)
-
-merge_sort k [] = []
-merge_sort k [x] = [x]
-merge_sort k xs = uncurry (merge k) $ mapB (merge_sort k) $ split xs
-    where
-      split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
-      merge pred xs []         = xs
-      merge pred [] ys         = ys
-      merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
-                               | otherwise = y: merge pred (x:xs) ys
-								
-mergesort :: (a -> a -> Bool) -> [a] -> [a]
-mergesort pred []   = []
-mergesort pred [x]  = [x]
-mergesort pred xs = merge pred (mergesort pred xs1) (mergesort pred xs2)
-  where
-    (xs1,xs2) = split xs
-    split xs = splitAt (floor (toRational (length xs) / toRational  2)) xs
-	
-merge pred xs []         = xs
-merge pred [] ys         = ys
-merge pred (x:xs) (y:ys) | pred x y  = x: merge pred xs (y:ys)
-                         | otherwise = y: merge pred (x:xs) ys
-
-
 fromList (x:xs) = cons(x, fromList xs) 
 fromList [] = nil
 
@@ -377,3 +439,29 @@ bimap f x = case x of Left a -> f a; Right b -> f b
 
 partition :: Functor' (->) h f => (a -> Bool) -> h (f a) (f (a :+: a))
 partition p = map (\v -> if p v then Left v else Right v)
+
+--type Lens b a = a :<->: (forall x. x, b)
+
+newtype Store b a = Store (b, (b -> a))
+
+-- trans = (Trans, (\(Trans p) -> p))
+
+-- store = (Store, (\(Store p) -> p)) 
+
+-- instance Functor (Store b) where
+  -- fmap f = app store . fmap (fmap f) . app (un store)
+
+-- instance CoMonoid (Trans (->)) Compose Identity (Store b) where
+  -- comult = Trans (app (un store) .:. \(x, f) -> (Identity (f x), Compose (store <: (x, (\y -> store <: (y, f))))))
+
+-- newtype Lens i b a = Lens (CoAlgebra i (Store b) a)
+
+-- x |> f = f x
+
+-- instance Category (Lens (->)) where
+  -- id                  = Lens (\x -> store <: (x, id))
+  -- (Lens f) . (Lens g) = Lens (\x -> let (y, fk) = un store <: f x in
+                                    -- fmap fk (g y))
+
+-- -- ahn :: CoMonad (Store x) => (Lens (->) b c) -> Lens (->) a b -> Lens (->) a c
+-- ahn (Lens f) (Lens g) = Lens (\x -> (un store <: f x) |> \(y, k) -> erase (store <: (g y, fmap k)))
